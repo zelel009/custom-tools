@@ -4,7 +4,8 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from app.core.db import create_youtube_job, get_youtube_job
+from app.core.db import create_youtube_job as db_create_youtube_job
+from app.core.db import get_youtube_job
 from app.models.schemas import (
     YouTubeExtractRequest,
     YouTubeExtractResponse,
@@ -38,12 +39,12 @@ def extract_youtube_content(payload: YouTubeExtractRequest) -> YouTubeExtractRes
 
 
 @router.post("/youtube/jobs", response_model=YouTubeJobCreateResponse)
-def create_youtube_job(payload: YouTubeExtractRequest) -> YouTubeJobCreateResponse:
+def create_youtube_job_endpoint(payload: YouTubeExtractRequest) -> YouTubeJobCreateResponse:
     job_id = str(uuid4())
-    payload_data = payload.model_dump()
+    payload_data = payload.model_dump(mode="json")
 
     try:
-        create_youtube_job(job_id=job_id, payload=payload_data, status="queued")
+        db_create_youtube_job(job_id=job_id, payload=payload_data, status="queued")
         q = get_youtube_queue()
         q.enqueue("app.worker.jobs.process_youtube_job", job_id, payload_data, job_id=job_id)
         return YouTubeJobCreateResponse(job_id=job_id, status="queued")
