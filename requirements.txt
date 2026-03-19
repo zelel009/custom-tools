@@ -5,3 +5,5 @@ pydantic-settings==2.6.1
 httpx==0.28.1
 yt-dlp==2026.3.18
 python-dotenv==1.0.1
+redis==5.2.1
+rq==1.16.2

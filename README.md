@@ -1,12 +1,12 @@
 # custom-tools
 
-Project mới tách riêng từ app cũ, ưu tiên **tính năng 2 và 3**:
+Project riêng cho 2 tính năng đã chốt từ app local:
 
-- ✅ Feature 2: **Viết lại nội dung** (`/api/v1/rewrite`)
-- ✅ Feature 3: **Lấy nội dung YouTube** (`/api/v1/youtube/extract`)
-- ⏳ Feature 1 (VBEE): để triển khai sau
+- ✅ **Feature 2: Viết lại nội dung** (Gemini + fallback local)
+- ✅ **Feature 3: Lấy nội dung YouTube** (video/playlist + transcript + export)
+- ⏳ Feature 1 (VBEE): triển khai sau
 
-Project được tổ chức theo chuẩn có thể đưa lên GitHub và chạy Docker.
+Project đã sẵn sàng theo chuẩn GitHub + Docker, có worker queue cho tác vụ YouTube nặng và SQLite để lưu lịch sử.
 
 ---
 
@@ -15,71 +15,53 @@ Project được tổ chức theo chuẩn có thể đưa lên GitHub và chạy
 - Python 3.11
 - FastAPI
 - yt-dlp
+- Redis + RQ (worker queue)
+- SQLite (log/history)
 - Docker + docker-compose
 
 ---
 
-## 2) Cấu trúc thư mục
+## 2) Kiến trúc chính
 
-```text
-custom-tools/
-├─ app/
-│  ├─ api/
-│  │  ├─ router.py
-│  │  └─ v1/
-│  │     ├─ rewrite.py
-│  │     └─ youtube.py
-│  ├─ core/
-│  │  └─ config.py
-│  ├─ models/
-│  │  └─ schemas.py
-│  ├─ services/
-│  │  ├─ rewrite_service.py
-│  │  └─ youtube_service.py
-│  └─ main.py
-├─ .github/workflows/ci.yml
-├─ .env.example
-├─ docker-compose.yml
-├─ Dockerfile
-├─ requirements.txt
-└─ README.md
-```
+- **Backend**: FastAPI (`app/main.py`)
+- **Workers**: RQ worker (`app/worker/run_worker.py`) xử lý YouTube jobs
+- **Storage**: SQLite (`app/core/db.py`) lưu rewrite runs + youtube jobs
+- **Export files**: `.txt / .json / .srt` trong thư mục `EXPORT_DIR`
 
 ---
 
-## 3) Cấu hình môi trường
-
-File `.env` đã được tạo với placeholder. Bạn cần thay:
-
-- `GEMINI_API_KEY` (nếu muốn rewrite bằng Gemini thật)
-
-Nếu chưa có key, API rewrite vẫn chạy ở chế độ fallback local.
-
----
-
-## 4) Chạy bằng Docker
+## 3) Chạy bằng Docker
 
 ```bash
 docker compose up --build
 ```
 
-API chạy tại: `http://localhost:8000`
+Services:
 
-Swagger UI: `http://localhost:8000/docs`
-
----
-
-## 5) API usage
-
-### 5.1 Health check
-
-`GET /health`
+- API: `http://localhost:8000`
+- Swagger: `http://localhost:8000/docs`
+- Redis: nội bộ qua `redis://redis:6379/0`
 
 ---
 
-### 5.2 Feature 2 - Viết lại nội dung
+## 4) Biến môi trường
 
-`POST /api/v1/rewrite`
+Các biến chính trong `.env` / `.env.example`:
+
+- `GEMINI_API_KEY`, `GEMINI_MODEL`
+- `REDIS_URL`
+- `SQLITE_PATH`
+- `EXPORT_DIR`
+- `YOUTUBE_MAX_PLAYLIST_ITEMS`
+- `YOUTUBE_JOB_TIMEOUT_SECONDS`
+
+> Nếu chưa có `GEMINI_API_KEY`, feature rewrite vẫn chạy bằng fallback local.
+
+---
+
+## 5) API – Feature 2: Viết lại nội dung
+
+### `POST /api/v1/rewrite`
 
 Body mẫu:
 
@@ -88,15 +70,24 @@ Body mẫu:
   "text": "Nội dung gốc cần viết lại...",
   "style": "engaging",
   "language": "vi",
-  "preserve_keywords": ["YouTube", "AI"]
+  "preserve_keywords": ["YouTube", "AI"],
+  "variant_count": 3
 }
 ```
 
-Styles hỗ trợ: `natural`, `concise`, `engaging`, `formal`, `seo`
+`variant_count`: từ 1 đến 3.
+
+Output gồm:
+
+- `variants`: 1–3 phiên bản rewrite
+- `comparison`: so sánh word/char count và số keywords giữ được
+- tự động lưu lịch sử vào SQLite
 
 ---
 
-### 5.3 Feature 3 - Lấy nội dung YouTube
+## 6) API – Feature 3: Lấy nội dung YT
+
+### A. Chạy đồng bộ (trả kết quả ngay)
 
 `POST /api/v1/youtube/extract`
 
@@ -106,24 +97,58 @@ Body mẫu:
 {
   "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
   "include_transcript": true,
-  "language_priority": ["vi", "en"]
+  "language_priority": ["vi", "en"],
+  "max_items": 10,
+  "export_formats": ["txt", "json", "srt"]
 }
 ```
 
-Kết quả trả về metadata + transcript (nếu có subtitle/caption khả dụng).
+### B. Chạy qua worker queue (khuyến nghị)
+
+1. `POST /api/v1/youtube/jobs` (enqueue)
+2. `GET /api/v1/youtube/jobs/{job_id}` (status/result)
+3. `GET /api/v1/youtube/jobs/{job_id}/exports/{fmt}` (download file export)
+
+Hỗ trợ URL video và playlist (giới hạn theo `max_items`).
 
 ---
 
-## 6) Lộ trình tiếp theo
+## 7) Rủi ro đã xử lý trong thiết kế
 
-- Thêm Feature 1 (VBEE) thành `/api/v1/vbee/tts`
-- Thêm auth (API key/JWT)
-- Thêm logging + rate limit + retry policy
-- Thêm test tự động cho service layer
+- Video private / age-restricted / no subtitle: job có trạng thái `failed` hoặc trả transcript rỗng
+- YouTube thay đổi cấu trúc: cô lập logic tại `youtube_service.py`
+- Tác vụ nặng: đưa vào queue worker thay vì block API
 
 ---
 
-## 7) Lưu ý bảo mật
+## 8) Cấu trúc thư mục
 
-- Không commit API key thật vào repo.
-- Chỉ dùng `.env` local, và rotate key nếu từng lộ.
+```text
+app/
+├─ api/
+│  ├─ router.py
+│  └─ v1/
+│     ├─ rewrite.py
+│     └─ youtube.py
+├─ core/
+│  ├─ config.py
+│  └─ db.py
+├─ models/
+│  └─ schemas.py
+├─ services/
+│  ├─ export_service.py
+│  ├─ rewrite_service.py
+│  └─ youtube_service.py
+└─ worker/
+   ├─ queue.py
+   ├─ jobs.py
+   └─ run_worker.py
+```
+
+---
+
+## 9) Lưu ý bảo mật
+
+- Không commit API key thật.
+- Key cũ từ app local nên được rotate nếu từng lộ.
+- Dùng `.env` local hoặc secret store cho production.
