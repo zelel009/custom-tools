@@ -7,6 +7,13 @@ from typing import Any, Dict, List
 from app.core.config import settings
 
 
+def _to_srt_timestamp(seconds: int) -> str:
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    s = seconds % 60
+    return f"{h:02}:{m:02}:{s:02},000"
+
+
 def _naive_transcript_to_srt(text: str) -> str:
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     out: List[str] = []
@@ -14,7 +21,7 @@ def _naive_transcript_to_srt(text: str) -> str:
     for idx, line in enumerate(lines, start=1):
         end = start + 2
         out.append(str(idx))
-        out.append(f"00:00:{start:02},000 --> 00:00:{end:02},000")
+        out.append(f"{_to_srt_timestamp(start)} --> {_to_srt_timestamp(end)}")
         out.append(line)
         out.append("")
         start = end
@@ -53,7 +60,6 @@ def _build_srt_content(result: Dict[str, Any]) -> str:
         transcript_text = item.get("transcript") or ""
 
         if item_srt:
-            # normalize index for merged playlist output
             chunks = [blk for blk in item_srt.replace("\r\n", "\n").split("\n\n") if blk.strip()]
             out_lines.append(f"NOTE Item {item_idx}: {item.get('title') or ''}")
             out_lines.append("")
@@ -70,7 +76,6 @@ def _build_srt_content(result: Dict[str, Any]) -> str:
                         current_index += 1
             continue
 
-        # fallback: create naive SRT from plain transcript text
         if transcript_text:
             naive = _naive_transcript_to_srt(transcript_text)
             chunks = [blk for blk in naive.split("\n\n") if blk.strip()]

@@ -11,3 +11,7 @@ venv/
 .mypy_cache/
 .DS_Store
 .vscode/
+
+# runtime data
+data/
+exports/
